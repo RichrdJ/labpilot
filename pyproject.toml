@@ -1,0 +1,17 @@
+[project]
+name = "labpilot"
+version = "1.0.0"
+description = "One pane of glass for ESXi, Synology, UniFi and Veeam"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

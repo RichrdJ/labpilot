@@ -1,0 +1,237 @@
+"""LabPilot – one pane of glass for ESXi, Synology, UniFi and Veeam."""
+from __future__ import annotations
+
+import asyncio
+import hmac
+import json
+import logging
+import os
+import secrets
+from contextlib import asynccontextmanager
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from starlette.middleware.sessions import SessionMiddleware
+
+from . import __version__
+from .collectors.base import Collector, CollectorError
+from .config import Settings
+from .config import settings as default_settings
+from .engine import Engine
+
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log = logging.getLogger("labpilot")
+STATIC = Path(__file__).parent / "static"
+
+
+def build_collectors(cfg: Settings) -> list[Collector]:
+    if cfg.demo_active:
+        from .collectors.demo import DemoCollector, DemoLab
+
+        lab = DemoLab()
+        return [
+            DemoCollector(lab, "esxi", "ESXi"),
+            DemoCollector(lab, "synology", "Synology"),
+            DemoCollector(lab, "unifi", "UniFi"),
+            DemoCollector(lab, "veeam", "Veeam"),
+        ]
+    out: list[Collector] = []
+    if cfg.esxi.enabled:
+        from .collectors.esxi import ESXiCollector
+
+        out.append(ESXiCollector(cfg.esxi))
+    if cfg.synology.enabled:
+        from .collectors.synology import SynologyCollector
+
+        out.append(SynologyCollector(cfg.synology))
+    if cfg.unifi.enabled:
+        from .collectors.unifi import UniFiCollector
+
+        out.append(UniFiCollector(cfg.unifi))
+    if cfg.veeam.enabled:
+        from .collectors.veeam import VeeamCollector
+
+        out.append(VeeamCollector(cfg.veeam))
+    return out
+
+
+def seed_demo(engine: Engine) -> None:
+    """Backfill history and a few events so the demo looks alive from the first second."""
+    import math
+    import random
+    import time
+    from collections import deque
+
+    now = time.time()
+    n = engine.settings.history_points
+    step = engine.settings.poll_interval
+    shapes = {
+        "esxi_cpu": (32, 9, 0.0), "esxi_mem": (66, 3, 1.0), "nas_cpu": (14, 7, 2.0), "nas_mem": (63, 2, 0.5),
+        "wan_rx": (140e6, 90e6, 0.3), "wan_tx": (18e6, 9e6, 1.7), "clients": (27, 2, 0.9), "latency": (9, 2, 0.1),
+    }
+    for key, (base, amp, ph) in shapes.items():
+        dq = deque(maxlen=n)
+        for i in range(n):
+            t = now - (n - i) * step
+            v = base + amp * math.sin(i / 9 + ph) + amp * 0.5 * math.sin(i / 3.1 + ph * 2) + random.uniform(-amp, amp) * 0.25
+            if key.startswith("wan") and random.random() < 0.05:
+                v *= 1.8
+            dq.append((round(t), round(max(0.0, v), 2)))
+        engine.history[key] = dq
+    seeded = [
+        (5400, "success", "veeam", "Job Nightly VMs: success"),
+        (4200, "critical", "veeam", "Job Offsite copy: failed"),
+        (2700, "info", "esxi", "VM k8s-worker-2: on → off"),
+        (1800, "warning", "unifi", "Nieuw op netwerk: tuya-3c6a91 (10.10.30.77, IoT)"),
+        (1500, "warning", "unifi", "IPS-melding: scan op poort 3306 geblokkeerd"),
+        (600, "success", "esxi", "power on → gitlab"),
+        (240, "info", "synology", "Hyper Backup → C2 gestart"),
+    ]
+    for ago_s, lvl, src, msg in reversed(seeded):
+        engine.events.appendleft({"time": now - ago_s, "level": lvl, "source": src, "msg": msg})
+    engine.events = deque(sorted(engine.events, key=lambda e: -e["time"]), maxlen=200)
+    engine.snapshot = engine._build_snapshot()
+
+
+class ActionIn(BaseModel):
+    source: str
+    kind: str
+    target: str
+
+
+ALLOWED_ACTIONS = {
+    "esxi": {"power_on", "shutdown", "power_off", "reboot"},
+    "unifi": {"block", "unblock", "reconnect"},
+    "veeam": {"start", "stop"},
+}
+
+
+def create_app(cfg: Settings = default_settings) -> FastAPI:
+    engine = Engine(cfg, build_collectors(cfg))
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        mode = "DEMO" if cfg.demo_active else ", ".join(engine.collectors) or "none"
+        log.info("LabPilot %s starting – sources: %s", __version__, mode)
+        await engine.poll()
+        if cfg.demo_active:
+            seed_demo(engine)
+        engine.start()
+        yield
+        await engine.stop()
+
+    app = FastAPI(title="LabPilot", version=__version__, lifespan=lifespan, docs_url="/api/docs", redoc_url=None)
+    app.state.engine = engine
+
+    # -- optional password protection --------------------------------------
+    open_paths = ("/login", "/healthz", "/static/", "/favicon.svg")
+
+    @app.middleware("http")
+    async def auth_guard(request: Request, call_next):
+        if cfg.password and not request.url.path.startswith(open_paths):
+            if not request.session.get("auth"):
+                if request.url.path.startswith("/api/"):
+                    return JSONResponse({"detail": "Not authenticated"}, status_code=401)
+                return RedirectResponse("/login")
+        return await call_next(request)
+
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=cfg.secret_key or secrets.token_hex(32),
+        session_cookie="labpilot",
+        max_age=60 * 60 * 24 * 14,
+        same_site="lax",
+        https_only=False,
+    )
+
+    @app.get("/login", include_in_schema=False)
+    async def login_page():
+        return FileResponse(STATIC / "login.html")
+
+    @app.post("/login", include_in_schema=False)
+    async def login(request: Request):
+        form = await request.form()
+        if cfg.password and hmac.compare_digest(str(form.get("password", "")), cfg.password):
+            request.session["auth"] = True
+            return RedirectResponse("/", status_code=303)
+        await asyncio.sleep(1)
+        return RedirectResponse("/login?error=1", status_code=303)
+
+    @app.get("/logout", include_in_schema=False)
+    async def logout(request: Request):
+        request.session.clear()
+        return RedirectResponse("/login")
+
+    # -- API -----------------------------------------------------------------
+    @app.get("/healthz", include_in_schema=False)
+    async def healthz():
+        return {"status": "ok", "version": __version__}
+
+    @app.get("/api/state")
+    async def state():
+        return {**engine.snapshot, "version": __version__}
+
+    @app.get("/api/stream")
+    async def stream(request: Request):
+        async def gen():
+            version = -1
+            while True:
+                if await request.is_disconnected():
+                    break
+                if version != engine.version:
+                    version = engine.version
+                    payload = json.dumps({**engine.snapshot, "version": __version__}, default=str)
+                    yield f"event: state\ndata: {payload}\n\n"
+                else:
+                    yield ": keepalive\n\n"
+                await engine.wait_for_update(version)
+
+        return StreamingResponse(
+            gen(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+
+    @app.post("/api/refresh")
+    async def refresh():
+        await engine.poll()
+        return {"ok": True}
+
+    @app.post("/api/actions")
+    async def action(body: ActionIn):
+        if not (cfg.actions_enabled or cfg.demo_active):
+            raise HTTPException(403, "Acties staan uit. Zet ACTIONS_ENABLED=true om ze te gebruiken.")
+        if body.kind not in ALLOWED_ACTIONS.get(body.source, set()):
+            raise HTTPException(400, "Onbekende actie")
+        collector = engine.collectors.get(body.source)
+        if not collector:
+            raise HTTPException(404, f"Bron {body.source} is niet geconfigureerd")
+        try:
+            msg = await collector.action(body.kind, body.target)
+        except CollectorError as exc:
+            engine.event("critical", body.source, f"Actie mislukt: {exc}")
+            raise HTTPException(502, str(exc)) from exc
+        engine.event("success", body.source, msg)
+        await asyncio.sleep(0.5)
+        await engine.poll()
+        return {"ok": True, "message": msg}
+
+    # -- frontend ------------------------------------------------------------
+    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon():
+        return FileResponse(STATIC / "favicon.svg", media_type="image/svg+xml")
+
+    @app.get("/", include_in_schema=False)
+    async def index():
+        html = (STATIC / "index.html").read_text(encoding="utf-8").replace("{{VERSION}}", __version__)
+        return HTMLResponse(html)
+
+    return app
+
+
+app = create_app()
