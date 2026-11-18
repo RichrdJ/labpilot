@@ -43,7 +43,7 @@ curl -L https://raw.githubusercontent.com/RichrdJ/labpilot/main/.env.example -o 
 docker compose up -d
 ```
 
-Open daarna **http://&lt;host&gt;:8080**. Zonder configuratie start LabPilot in **demomodus** met realistische nepdata.
+Open daarna **http://&lt;host&gt;:38471**. Zonder configuratie start LabPilot in **demomodus** met realistische nepdata.
 
 Je kunt ook de zip van de [laatste release](../../releases/latest) downloaden: daar zitten `docker-compose.yml` en `.env.example` al in.
 

@@ -5,7 +5,7 @@ services:
     restart: unless-stopped
     env_file: .env
     ports:
-      - "8080:8080"
+      - "38471:8080"   # host-poort:containerpoort, pas de eerste aan als 38471 bezet is
     read_only: true
     tmpfs:
       - /tmp
