@@ -75,6 +75,7 @@
     hdd: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="12" cy="12" r="4"/><path d="M12 12h.01"/>',
     bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7Z"/>',
     clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    lock: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/>',
     users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M21.5 20a6.5 6.5 0 0 0-4-6"/>',
     down: '<path d="M12 4v16M6 14l6 6 6-6"/>',
     up: '<path d="M12 20V4M6 10l6-6 6 6"/>',
@@ -83,6 +84,9 @@
     chip: '<path d="M4 7h16v10H4z"/><path d="M8 7V4M16 7V4M8 20v-3M16 20v-3"/>',
     temp: '<path d="M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0Z"/>',
     battery: '<rect x="2" y="7" width="17" height="10" rx="2"/><path d="M22 11v2M6 10v4M10 10v4M14 10v4"/>',
+    settings: '<path d="M10.3 4.3a1.7 1.7 0 0 1 3.4 0 1.7 1.7 0 0 0 2.6 1.1 1.7 1.7 0 0 1 2.4 2.4 1.7 1.7 0 0 0 1 2.6 1.7 1.7 0 0 1 0 3.4 1.7 1.7 0 0 0-1 2.6 1.7 1.7 0 0 1-2.4 2.4 1.7 1.7 0 0 0-2.6 1 1.7 1.7 0 0 1-3.4 0 1.7 1.7 0 0 0-2.6-1 1.7 1.7 0 0 1-2.4-2.4 1.7 1.7 0 0 0-1-2.6 1.7 1.7 0 0 1 0-3.4 1.7 1.7 0 0 0 1-2.6 1.7 1.7 0 0 1 2.4-2.4 1.7 1.7 0 0 0 2.6-1Z"/><circle cx="12" cy="12" r="3"/>',
+    plug: '<path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0Z"/><path d="M12 18v4"/>',
+    save: '<path d="M5 3h11l3 3v15H5Z"/><path d="M8 3v5h7V3M8 21v-7h8v7"/>',
     logout: '<path d="M15 4h4a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1h-4M10 17l5-5-5-5M15 12H3"/>',
   };
   const ic = (name, size = 16, sw = 1.9) =>
@@ -226,6 +230,7 @@
     { id: "network", label: "Netwerk", icon: "net", src: "unifi", sub: () => S.unifi ? `${S.unifi.wan.gateway || "UniFi"} · ${S.unifi.wan.isp || ""} · WAN ${S.unifi.wan.ip || ""}` : "UniFi niet geconfigureerd" },
     { id: "backup", label: "Back-up", icon: "shield", src: "veeam", sub: () => S.veeam ? `Veeam Backup & Replication · ${S.veeam.jobs.length} jobs` : "Veeam niet geconfigureerd" },
     { id: "activity", label: "Activiteit", icon: "activity", sub: () => "Gebeurtenissen en uitgevoerde acties" },
+    { id: "settings", label: "Instellingen", icon: "settings", sub: () => "Koppelingen en algemene opties" },
   ];
 
   function renderChrome() {
@@ -283,7 +288,7 @@
   const notConfigured = (src) => {
     const st = S.status?.[src];
     const body = st ? `<div style="margin-top:14px;font-weight:600;color:var(--crit)">${SRC[src].label} is niet bereikbaar</div><span class="mono">${esc(st.error || "")}</span>`
-      : `<div style="margin-top:14px;font-weight:600;color:var(--text)">${SRC[src].label} is niet gekoppeld</div>Voeg de variabelen voor ${SRC[src].label} toe aan je <span class="mono">.env</span> en herstart de container.`;
+      : `<div style="margin-top:14px;font-weight:600;color:var(--text)">${SRC[src].label} is niet gekoppeld</div>Vul de gegevens in onder <a href="#settings" style="color:var(--accent)">Instellingen</a>.`;
     return `<div class="card"><div class="empty">${srcIco(src, 44)}${body}</div></div>`;
   };
 
@@ -327,7 +332,7 @@
     const maxRate = Math.max(1, ...corr.map((c) => c.rx_rate + c.tx_rate));
 
     return `
-      ${S.meta.demo ? `<div class="banner">${ic("info", 18)}<div><b>Demomodus</b>: je ziet gesimuleerde data. Vul je <span class="mono">.env</span> in om je eigen ESXi, Synology, UDM Pro en Veeam te koppelen.</div></div>` : ""}
+      ${S.meta.demo ? `<div class="banner">${ic("info", 18)}<div><b>Demomodus</b>: je ziet gesimuleerde data. Koppel je eigen ESXi, Synology, UDM Pro en Veeam via <a href="#settings" style="color:var(--accent);font-weight:600">Instellingen</a>.</div></div>` : ""}
       <div class="grid g-kpi">${kpis.map((k) => `
         <div class="card kpi"><div class="label"><span style="color:${k.color}">${ic(k.icon, 15)}</span>${k.label}</div>
           <div class="value">${k.value}</div><div class="delta">${k.small}</div>
@@ -572,7 +577,147 @@
       <div class="card"><div class="card-h"><h3>Alle aandachtspunten</h3></div>${insightList(S.insights, 50)}</div></div>`;
   }
 
-  const PAGE_FN = { overview: pageOverview, compute: pageCompute, storage: pageStorage, network: pageNetwork, backup: pageBackup, activity: pageActivity };
+  // ------------------------------------------------------------------ settings page
+  const ST = { schema: null, values: null, placeholder: null, dirty: false, tests: {}, saving: false, error: null, storage: "", writable: null };
+
+  async function loadSettings() {
+    const r = await fetch("/api/settings");
+    if (r.status === 401) { location.href = "/login"; return; }
+    const j = await r.json();
+    Object.assign(ST, { schema: j.schema, values: j.values, placeholder: j.placeholder, storage: j.storage, writable: j.writable_error, dirty: false });
+    if (route === "settings") { $("#view").innerHTML = pageSettings(); }
+  }
+
+  const SRC_ORDER = ["esxi", "synology", "unifi", "veeam"];
+
+  function fieldHtml(group, [name, label, type, ph]) {
+    const vals = group === "general" ? ST.values : ST.values[group];
+    const v = vals?.[name];
+    const id = `f-${group}-${name}`;
+    if (type === "bool") {
+      return `<label class="switch-row" for="${id}"><span>${esc(label)}</span><span class="switch"><input type="checkbox" id="${id}" data-g="${group}" data-k="${name}" ${v ? "checked" : ""}/><i></i></span></label>`;
+    }
+    if (type === "password") {
+      const stored = v === ST.placeholder;
+      return `<div class="fld"><label for="${id}">${esc(label)}</label><div class="pw">
+        <input class="input" type="password" id="${id}" data-g="${group}" data-k="${name}" data-secret="1" data-stored="${stored ? 1 : 0}" autocomplete="new-password" placeholder="${stored ? "•••••••• opgeslagen" : esc(ph || "")}"/>
+        ${stored ? `<button type="button" class="btn sm ghost" data-clear="${id}" title="Opgeslagen waarde wissen">Wissen</button>` : ""}</div></div>`;
+    }
+    return `<div class="fld"><label for="${id}">${esc(label)}</label><input class="input" type="${type === "number" ? "number" : "text"}" id="${id}" data-g="${group}" data-k="${name}" value="${esc(v ?? "")}" placeholder="${esc(ph || "")}"/></div>`;
+  }
+
+  function pageSettings() {
+    if (!ST.schema) { loadSettings(); return `<div class="card"><div class="empty">Instellingen laden…</div></div>`; }
+    const g = ST.schema.general;
+    const status = (k) => {
+      const st = S?.status?.[k];
+      if (!ST.values[k].configured) return `<span class="badge off">niet gekoppeld</span>`;
+      if (S?.meta?.demo) return `<span class="badge plain info">opgeslagen</span>`;
+      return st?.ok ? `<span class="badge ok">verbonden</span>` : st?.ok === false ? `<span class="badge critical" title="${esc(st.error || "")}">fout</span>` : `<span class="badge off">wachten…</span>`;
+    };
+    const test = (k) => { const t = ST.tests[k]; if (!t) return ""; return `<div class="test-result ${t.busy ? "" : t.ok ? "ok" : "bad"}">${t.busy ? `<span class="spin">${ic("refresh", 13)}</span> Verbinding testen…` : `${ic(t.ok ? "check" : "x", 15)} ${esc(t.message)}`}</div>`; };
+    return `
+      ${ST.writable ? `<div class="banner bad">${ic("alert", 18)}<div><b>Instellingen kunnen niet worden opgeslagen.</b> ${esc(ST.writable)}. Koppel een volume aan <span class="mono">/data</span>.</div></div>` : ""}
+      ${!ST.values.password || ST.values.password === "" ? `<div class="banner warn">${ic("lock", 18)}<div><b>Geen inlogwachtwoord ingesteld.</b> Iedereen op je netwerk kan dit dashboard en deze instellingen openen. Stel hieronder een wachtwoord in.</div></div>` : ""}
+      <form id="settings-form" autocomplete="off">
+      <div class="grid g-2">
+        ${SRC_ORDER.map((k) => `<div class="card">
+          <div class="card-h">${srcIco(k, 32)}<div><h3>${esc(ST.schema[k].label)}</h3></div><div class="right">${status(k)}
+            <label class="switch" title="Koppeling aan/uit"><input type="checkbox" data-g="${k}" data-k="active" ${ST.values[k].active ? "checked" : ""}/><i></i></label></div></div>
+          <div class="fields">${ST.schema[k].fields.map((f) => fieldHtml(k, f)).join("")}</div>
+          <div class="card-foot"><button type="button" class="btn sm" data-test="${k}">${ic("plug", 14)}Verbinding testen</button>${test(k)}</div>
+        </div>`).join("")}
+      </div>
+      <div class="card mt"><div class="card-h"><span class="src-ico" style="width:32px;height:32px;background:var(--line);color:var(--text-2)">${ic("settings", 17)}</span><h3>${esc(g.label)}</h3></div>
+        <div class="fields cols">${g.fields.map((f) => fieldHtml("general", f)).join("")}</div></div>
+      <div class="savebar ${ST.dirty ? "show" : ""}" id="savebar">
+        <span>${ST.error ? `<span style="color:var(--crit)">${esc(ST.error)}</span>` : "Je hebt niet-opgeslagen wijzigingen"}</span>
+        <button type="button" class="btn ghost" id="settings-reset">Annuleren</button>
+        <button type="button" class="btn primary" id="settings-save">${ST.saving ? `<span class="spin">${ic("refresh", 14)}</span>` : ic("save", 15)}Opslaan en koppelen</button>
+      </div>
+      <div class="dim" style="font-size:12px;margin-top:14px">Opgeslagen in <span class="mono">${esc(ST.storage)}</span>. Wachtwoorden worden nooit teruggestuurd naar de browser.</div>
+      </form>`;
+  }
+
+  function collectForm(group) {
+    const out = {};
+    $$(`#settings-form [data-g]`).forEach((el) => {
+      const g = el.dataset.g;
+      if (group && g !== group) return;
+      let v;
+      if (el.type === "checkbox") v = el.checked;
+      else if (el.dataset.secret) v = el.value !== "" ? el.value : el.dataset.stored === "1" ? ST.placeholder : "";
+      else v = el.value;
+      if (g === "general") out[el.dataset.k] = v;
+      else (out[g] = out[g] || {})[el.dataset.k] = v;
+    });
+    return out;
+  }
+
+  function markDirty() {
+    ST.dirty = true;
+    const bar = $("#savebar");
+    if (bar) bar.classList.add("show");
+  }
+
+  async function saveSettings() {
+    ST.saving = true; ST.error = null;
+    const body = collectForm();
+    $("#settings-save").innerHTML = `<span class="spin">${ic("refresh", 14)}</span>Opslaan…`;
+    try {
+      const r = await fetch("/api/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.detail || r.statusText);
+      ST.values = j.values; ST.dirty = false;
+      toast(j.demo ? "Opgeslagen, nog in demomodus tot er een koppeling is ingevuld" : "Opgeslagen en opnieuw gekoppeld", "ok");
+      await load();
+    } catch (e) {
+      ST.error = e.message; toast(e.message, "critical");
+    }
+    ST.saving = false;
+    if (route === "settings") $("#view").innerHTML = pageSettings();
+  }
+
+  async function testSource(k) {
+    ST.tests[k] = { busy: true };
+    const keep = collectForm();
+    $("#view").innerHTML = pageSettings();
+    restoreForm(keep);
+    let res;
+    try {
+      const r = await fetch("/api/settings/test", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ source: k, config: keep[k] || {} }) });
+      res = await r.json();
+      if (!r.ok) res = { ok: false, message: res.detail || r.statusText };
+    } catch (e) { res = { ok: false, message: e.message }; }
+    ST.tests[k] = res;
+    const now = collectForm();
+    $("#view").innerHTML = pageSettings();
+    restoreForm(now);
+  }
+
+  function restoreForm(data) {
+    $$(`#settings-form [data-g]`).forEach((el) => {
+      const g = el.dataset.g, k = el.dataset.k;
+      const v = g === "general" ? data[k] : data[g]?.[k];
+      if (v === undefined) return;
+      if (el.type === "checkbox") el.checked = !!v;
+      else if (el.dataset.secret) el.value = v === ST.placeholder ? "" : v;
+      else el.value = v;
+    });
+    if (ST.dirty) $("#savebar")?.classList.add("show");
+  }
+
+  document.addEventListener("input", (e) => { if (e.target.closest?.("#settings-form")) markDirty(); });
+  document.addEventListener("change", (e) => { if (e.target.closest?.("#settings-form")) markDirty(); });
+  document.addEventListener("click", (e) => {
+    const t = e.target.closest("[data-test]"); if (t) { testSource(t.dataset.test); return; }
+    const c = e.target.closest("[data-clear]"); if (c) { const el = document.getElementById(c.dataset.clear); el.dataset.stored = "0"; el.placeholder = "Gewist bij opslaan"; c.remove(); markDirty(); return; }
+    if (e.target.closest("#settings-save")) { saveSettings(); return; }
+    if (e.target.closest("#settings-reset")) { ST.schema = null; ST.tests = {}; ST.error = null; $("#view").innerHTML = pageSettings(); }
+  });
+  window.addEventListener("beforeunload", (e) => { if (ST.dirty) { e.preventDefault(); e.returnValue = ""; } });
+
+  const PAGE_FN = { overview: pageOverview, compute: pageCompute, storage: pageStorage, network: pageNetwork, backup: pageBackup, activity: pageActivity, settings: pageSettings };
 
   // ------------------------------------------------------------------ render
   let lastRoute = null;
@@ -583,6 +728,8 @@
     const focused = document.activeElement?.id;
     const caret = focused ? document.activeElement.selectionStart : null;
     const y = window.scrollY;
+    if (route === "settings" && $("#settings-form") && lastRoute === route) return; // keep form state
+    if (route === "settings" && lastRoute !== route) { ST.schema = null; ST.tests = {}; }
     view.innerHTML = (PAGE_FN[route] || pageOverview)();
     if (lastRoute !== route) {
       view.classList.add("anim");

@@ -32,6 +32,27 @@ class Engine:
         self._task: asyncio.Task | None = None
         self._prev: dict[str, Any] = {}
 
+    async def reconfigure(self, settings: Settings, collectors: list[Collector]) -> None:
+        """Swap in new settings/collectors (called after saving settings in the UI)."""
+        old = list(self.collectors.values())
+        was_demo = self.settings.demo_active
+        self.settings = settings
+        self.collectors = {c.name: c for c in collectors}
+        self.status = {
+            c.name: {"label": c.label, "ok": None, "error": None, "updated": None, "latency_ms": None} for c in collectors
+        }
+        self.data = {}
+        self._prev = {}
+        if was_demo != settings.demo_active:
+            self.history.clear()
+        for c in old:
+            try:
+                await c.close()
+            except Exception:  # noqa: BLE001
+                pass
+        self.event("info", "labpilot", "Instellingen opgeslagen, bronnen opnieuw gekoppeld")
+        await self.poll()
+
     # -- lifecycle -----------------------------------------------------------
     def start(self) -> None:
         self._task = asyncio.create_task(self._loop())

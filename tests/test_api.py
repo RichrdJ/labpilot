@@ -1,6 +1,8 @@
 import os
+import tempfile
 
 os.environ.setdefault("DEMO_MODE", "true")
+os.environ.setdefault("DATA_DIR", tempfile.mkdtemp())
 
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -10,7 +12,7 @@ from app.main import create_app  # noqa: E402
 
 def client(**overrides) -> TestClient:
     cfg = Settings(demo=True, **overrides)
-    return TestClient(create_app(cfg))
+    return TestClient(create_app(cfg, data_dir=tempfile.mkdtemp()))
 
 
 def test_health():
@@ -69,3 +71,31 @@ def test_index_served():
         r = c.get("/")
         assert r.status_code == 200
         assert "LabPilot" in r.text
+
+
+def test_settings_roundtrip_keeps_secrets():
+    data_dir = tempfile.mkdtemp()
+    with TestClient(create_app(data_dir=data_dir)) as c:
+        s = c.get("/api/settings").json()
+        assert "esxi" in s["schema"] and s["values"]["esxi"]["configured"] is False
+        body = {"title": "Mijn lab", "esxi": {"host": "10.0.0.5", "user": "ro", "password": "geheim"}}
+        r = c.put("/api/settings", json=body)
+        assert r.status_code == 200
+        vals = r.json()["values"]
+        assert vals["title"] == "Mijn lab"
+        assert vals["esxi"]["password"] == s["placeholder"]  # never returned
+        # saving again with the placeholder keeps the stored password
+        c.put("/api/settings", json={"esxi": {"host": "10.0.0.6", "password": s["placeholder"]}})
+        stored = __import__("json").load(open(os.path.join(data_dir, "settings.json")))
+        assert stored["esxi"]["password"] == "geheim"
+        assert stored["esxi"]["host"] == "10.0.0.6"
+        assert c.get("/api/state").json()["meta"]["title"] == "Mijn lab"
+
+
+def test_settings_test_endpoint_reports_errors():
+    with TestClient(create_app(data_dir=tempfile.mkdtemp())) as c:
+        r = c.post("/api/settings/test", json={"source": "synology", "config": {"url": "https://127.0.0.1:1", "user": "x", "password": "y"}})
+        assert r.status_code == 200
+        assert r.json()["ok"] is False
+        r = c.post("/api/settings/test", json={"source": "veeam", "config": {}})
+        assert r.json()["ok"] is False

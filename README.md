@@ -35,41 +35,45 @@ Live status, slimme aandachtspunten, VM ↔ netwerk-koppeling en acties met éé
 
 ## Snel starten
 
+### Portainer
+
+1. **Stacks › Add stack**, geef hem een naam (bijv. `labpilot`)
+2. Plak de inhoud van [`docker-compose.yml`](docker-compose.yml) in de web-editor
+3. **Deploy the stack**
+4. Open **http://&lt;host&gt;:38471** en ga naar **Instellingen**
+
+### Docker Compose
+
 ```bash
 mkdir labpilot && cd labpilot
 curl -LO https://raw.githubusercontent.com/RichrdJ/labpilot/main/docker-compose.yml
-curl -L https://raw.githubusercontent.com/RichrdJ/labpilot/main/.env.example -o .env
-# vul .env in (of laat leeg voor de demo)
 docker compose up -d
 ```
 
-Open daarna **http://&lt;host&gt;:38471**. Zonder configuratie start LabPilot in **demomodus** met realistische nepdata.
-
-Je kunt ook de zip van de [laatste release](../../releases/latest) downloaden: daar zitten `docker-compose.yml` en `.env.example` al in.
-
 ### Synology Container Manager
 
-1. **Container Manager › Project › Aanmaken**
-2. Kies een map (bijv. `/docker/labpilot`) en plak de inhoud van `docker-compose.yml`
-3. Zet een `.env` in dezelfde map (via File Station)
-4. Bouwen en starten. Het image komt van `ghcr.io/richrdj/labpilot`.
+**Container Manager › Project › Aanmaken**, kies een map en plak de inhoud van `docker-compose.yml`.
+
+Zonder koppelingen start LabPilot in **demomodus** met realistische nepdata.
 
 ## Configuratie
 
-Alles gaat via omgevingsvariabelen; zie [`.env.example`](.env.example). Bronnen zonder instellingen worden overgeslagen.
+Alles stel je in via de webinterface onder **Instellingen**:
 
-| Variabele | Standaard | Omschrijving |
-|---|---|---|
-| `POLL_INTERVAL` | `15` | Seconden tussen metingen |
-| `ACTIONS_ENABLED` | `false` | Acties toestaan (VM aan/uit, client blokkeren, Veeam-job starten) |
-| `LABPILOT_PASSWORD` | – | Wachtwoord voor de inlogpagina |
-| `LABPILOT_SECRET` | random | Sleutel voor sessiecookies (zet vast, anders log je uit bij een herstart) |
-| `SNAPSHOT_MAX_AGE_DAYS` | `14` | Vanaf hoeveel dagen een snapshot "oud" is |
-| `LOW_SPACE_PCT` | `15` | Drempel voor "bijna vol" |
-| `ESXI_*` | – | `HOST`, `USER`, `PASSWORD`, `PORT`, `VERIFY_SSL` (werkt ook met vCenter) |
-| `SYNOLOGY_*` | – | `URL` (bijv. `https://nas:5001`), `USER`, `PASSWORD`, `VERIFY_SSL` |
-| `UNIFI_*` | – | `URL`, `USER` + `PASSWORD` **of** `API_KEY`, `SITE`, `VERIFY_SSL` |
-| `VEEAM_*` | – | `URL` (poort 9419), `USER`, `PASSWORD`, `API_VERSION`, `VERIFY_SSL` |
+- per koppeling (ESXi, Synology, UniFi, Veeam) het adres, de gebruiker en het wachtwoord of de API-key, met een knop **Verbinding testen**
+- een koppeling tijdelijk uitzetten met de schakelaar
+- algemeen: naam van het dashboard, ververs-interval, acties aan/uit, drempels voor oude snapshots en volle schijven, en een **inlogwachtwoord** voor het dashboard
+
+De instellingen staan in het volume `labpilot-data` (`/data/settings.json`, alleen leesbaar voor de container). Wachtwoorden worden nooit teruggestuurd naar de browser. Stel een inlogwachtwoord in als anderen op je netwerk bij het dashboard kunnen.
+
+De poort wijzig je in `docker-compose.yml` (`"38471:8080"` → `"<jouw-poort>:8080"`).
+
+<details>
+<summary>Omgevingsvariabelen (optioneel)</summary>
+
+Bij de allereerste start, zolang er nog niets via de webinterface is opgeslagen, leest LabPilot de variabelen uit [`.env.example`](.env.example) als startwaarden. Daarna gelden alleen de instellingen uit de webinterface.
+
+</details>
 
 ### Accounts met minimale rechten
 
@@ -80,9 +84,9 @@ Alles gaat via omgevingsvariabelen; zie [`.env.example`](.env.example). Bronnen 
 
 ## Veiligheid
 
-- Draait als non-root met een read-only filesystem.
+- Draait als non-root met een read-only filesystem; alleen `/data` is schrijfbaar.
 - Acties staan standaard **uit**; destructieve acties vragen een tweede klik.
-- Zet LabPilot achter je reverse proxy (bijv. Nginx Proxy Manager of Traefik) met HTTPS, en/of gebruik `LABPILOT_PASSWORD`.
+- Zet LabPilot achter je reverse proxy (bijv. Nginx Proxy Manager of Traefik) met HTTPS, en stel een inlogwachtwoord in via Instellingen.
 - Zet **geen** poort open naar internet; gebruik de VPN van je UDM (WireGuard/Teleport).
 
 ## API
@@ -95,13 +99,15 @@ De backend is een FastAPI-app met documentatie op `/api/docs`.
 | `GET /api/stream` | Server-Sent Events met elke nieuwe snapshot |
 | `POST /api/actions` | `{"source": "esxi", "kind": "power_on", "target": "vm-123"}` |
 | `POST /api/refresh` | Direct opnieuw meten |
+| `GET/PUT /api/settings` | Instellingen lezen en opslaan (wachtwoorden gemaskeerd) |
+| `POST /api/settings/test` | Verbinding van één koppeling testen |
 | `GET /healthz` | Healthcheck |
 
 ## Ontwikkelen
 
 ```bash
 pip install -r requirements-dev.txt
-DEMO_MODE=true uvicorn app.main:app --reload --port 8080
+DATA_DIR=./data uvicorn app.main:app --reload --port 8080
 pytest && ruff check app tests
 ```
 

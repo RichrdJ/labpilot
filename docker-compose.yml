@@ -1,43 +1,21 @@
-# Werkt met `docker compose` (variabelen uit .env in dezelfde map)
-# en met Portainer-stacks (variabelen via "Environment variables" of "Load variables from .env file").
+# LabPilot – alle koppelingen stel je in via de webinterface (Instellingen).
+# Werkt met `docker compose up -d` en als Portainer-stack.
 services:
   labpilot:
     image: ghcr.io/richrdj/labpilot:latest
     container_name: labpilot
     restart: unless-stopped
     ports:
-      - "${LABPILOT_PORT:-38471}:8080"   # host-poort:containerpoort
+      - "38471:8080"   # host-poort:containerpoort – pas 38471 aan als die bezet is
     environment:
-      TZ: ${TZ:-Europe/Amsterdam}
-      LABPILOT_TITLE: ${LABPILOT_TITLE:-LabPilot}
-      POLL_INTERVAL: ${POLL_INTERVAL:-15}
-      ACTIONS_ENABLED: ${ACTIONS_ENABLED:-false}
-      LABPILOT_PASSWORD: ${LABPILOT_PASSWORD:-}
-      LABPILOT_SECRET: ${LABPILOT_SECRET:-}
-      SNAPSHOT_MAX_AGE_DAYS: ${SNAPSHOT_MAX_AGE_DAYS:-14}
-      LOW_SPACE_PCT: ${LOW_SPACE_PCT:-15}
-      DEMO_MODE: ${DEMO_MODE:-false}
-      ESXI_HOST: ${ESXI_HOST:-}
-      ESXI_USER: ${ESXI_USER:-}
-      ESXI_PASSWORD: ${ESXI_PASSWORD:-}
-      ESXI_VERIFY_SSL: ${ESXI_VERIFY_SSL:-false}
-      SYNOLOGY_URL: ${SYNOLOGY_URL:-}
-      SYNOLOGY_USER: ${SYNOLOGY_USER:-}
-      SYNOLOGY_PASSWORD: ${SYNOLOGY_PASSWORD:-}
-      SYNOLOGY_VERIFY_SSL: ${SYNOLOGY_VERIFY_SSL:-false}
-      UNIFI_URL: ${UNIFI_URL:-}
-      UNIFI_USER: ${UNIFI_USER:-}
-      UNIFI_PASSWORD: ${UNIFI_PASSWORD:-}
-      UNIFI_API_KEY: ${UNIFI_API_KEY:-}
-      UNIFI_SITE: ${UNIFI_SITE:-default}
-      UNIFI_VERIFY_SSL: ${UNIFI_VERIFY_SSL:-false}
-      VEEAM_URL: ${VEEAM_URL:-}
-      VEEAM_USER: ${VEEAM_USER:-}
-      VEEAM_PASSWORD: ${VEEAM_PASSWORD:-}
-      VEEAM_API_VERSION: ${VEEAM_API_VERSION:-1.1-rev2}
-      VEEAM_VERIFY_SSL: ${VEEAM_VERIFY_SSL:-false}
+      TZ: Europe/Amsterdam
+    volumes:
+      - labpilot-data:/data   # instellingen (incl. wachtwoorden) blijven bewaard
     read_only: true
     tmpfs:
       - /tmp
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  labpilot-data:

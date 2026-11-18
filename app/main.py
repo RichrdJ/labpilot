@@ -6,7 +6,6 @@ import hmac
 import json
 import logging
 import os
-import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -18,8 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import __version__
 from .collectors.base import Collector, CollectorError
-from .config import Settings
-from .config import settings as default_settings
+from .config import SCHEMA, SECRET_FIELDS, SECRET_PLACEHOLDER, SOURCE_TYPES, Settings, SettingsStore, build_settings
 from .engine import Engine
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -109,13 +107,41 @@ ALLOWED_ACTIONS = {
 }
 
 
-def create_app(cfg: Settings = default_settings) -> FastAPI:
+def _summary(source: str, data: dict) -> str:
+    if source == "esxi":
+        return f"{len(data.get('hosts', []))} host(s), {len(data.get('vms', []))} VM's, {len(data.get('datastores', []))} datastores"
+    if source == "synology":
+        return f"{data.get('model')} · {len(data.get('volumes', []))} volume(s), {len(data.get('disks', []))} schijven"
+    if source == "unifi":
+        return f"{len(data.get('clients', []))} clients, {len(data.get('devices', []))} UniFi-apparaten"
+    if source == "veeam":
+        return f"{len(data.get('jobs', []))} jobs, {len(data.get('repositories', []))} repositories"
+    return "OK"
+
+
+class SettingsTestIn(BaseModel):
+    source: str
+    config: dict
+
+
+def create_app(cfg: Settings | None = None, data_dir: str | None = None) -> FastAPI:
+    store = SettingsStore(data_dir)
+    if cfg is None:
+        cfg = store.load()
+    if not cfg.secret_key:
+        cfg.secret_key = store.secret()
     engine = Engine(cfg, build_collectors(cfg))
+
+    def S() -> Settings:  # live settings
+        return engine.settings
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         mode = "DEMO" if cfg.demo_active else ", ".join(engine.collectors) or "none"
-        log.info("LabPilot %s starting – sources: %s", __version__, mode)
+        log.info("LabPilot %s starting – sources: %s – settings in %s", __version__, mode, store.path)
+        err = store.check_writable()
+        if err:
+            log.warning(err)
         await engine.poll()
         if cfg.demo_active:
             seed_demo(engine)
@@ -131,7 +157,7 @@ def create_app(cfg: Settings = default_settings) -> FastAPI:
 
     @app.middleware("http")
     async def auth_guard(request: Request, call_next):
-        if cfg.password and not request.url.path.startswith(open_paths):
+        if S().password and not request.url.path.startswith(open_paths):
             if not request.session.get("auth"):
                 if request.url.path.startswith("/api/"):
                     return JSONResponse({"detail": "Not authenticated"}, status_code=401)
@@ -140,7 +166,7 @@ def create_app(cfg: Settings = default_settings) -> FastAPI:
 
     app.add_middleware(
         SessionMiddleware,
-        secret_key=cfg.secret_key or secrets.token_hex(32),
+        secret_key=cfg.secret_key,
         session_cookie="labpilot",
         max_age=60 * 60 * 24 * 14,
         same_site="lax",
@@ -154,7 +180,8 @@ def create_app(cfg: Settings = default_settings) -> FastAPI:
     @app.post("/login", include_in_schema=False)
     async def login(request: Request):
         form = await request.form()
-        if cfg.password and hmac.compare_digest(str(form.get("password", "")), cfg.password):
+        pw = S().password
+        if pw and hmac.compare_digest(str(form.get("password", "")), pw):
             request.session["auth"] = True
             return RedirectResponse("/", status_code=303)
         await asyncio.sleep(1)
@@ -163,7 +190,7 @@ def create_app(cfg: Settings = default_settings) -> FastAPI:
     @app.get("/logout", include_in_schema=False)
     async def logout(request: Request):
         request.session.clear()
-        return RedirectResponse("/login")
+        return RedirectResponse("/login" if S().password else "/")
 
     # -- API -----------------------------------------------------------------
     @app.get("/healthz", include_in_schema=False)
@@ -200,10 +227,64 @@ def create_app(cfg: Settings = default_settings) -> FastAPI:
         await engine.poll()
         return {"ok": True}
 
+    # -- settings ------------------------------------------------------------
+    @app.get("/api/settings")
+    async def get_settings():
+        return {
+            "schema": SCHEMA,
+            "values": SettingsStore.public(S()),
+            "placeholder": SECRET_PLACEHOLDER,
+            "storage": str(store.path),
+            "writable_error": store.check_writable(),
+        }
+
+    @app.put("/api/settings")
+    async def put_settings(body: dict):
+        try:
+            new = store.save(body)
+        except OSError as exc:
+            raise HTTPException(500, f"Opslaan mislukt: {exc.strerror or exc}. Is {store.dir} schrijfbaar?") from exc
+        demo_before = S().demo_active
+        await engine.reconfigure(new, build_collectors(new))
+        if new.demo_active and not demo_before:
+            seed_demo(engine)
+        return {"ok": True, "values": SettingsStore.public(new), "demo": new.demo_active}
+
+    @app.post("/api/settings/test")
+    async def test_settings(body: SettingsTestIn):
+        if body.source not in SOURCE_TYPES:
+            raise HTTPException(400, "Onbekende bron")
+        current = store.raw().get(body.source) or {}
+        conf = dict(body.config)
+        for k in SECRET_FIELDS:
+            if conf.get(k) == SECRET_PLACEHOLDER:
+                conf[k] = current.get(k, "")
+        probe = build_settings({body.source: {**conf, "active": True}})
+        sub = getattr(probe, body.source)
+        if not sub.enabled:
+            return {"ok": False, "message": "Vul minimaal het adres en de inloggegevens in."}
+        probe.demo = False
+        collectors = [c for c in build_collectors(probe) if c.name == body.source]
+        if not collectors:
+            return {"ok": False, "message": "Bron kon niet worden aangemaakt"}
+        c = collectors[0]
+        try:
+            data = await asyncio.wait_for(c.collect(), timeout=25)
+            return {"ok": True, "message": f"Verbonden: {_summary(body.source, data)}"}
+        except TimeoutError:
+            return {"ok": False, "message": "Time-out: geen antwoord binnen 25 seconden"}
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "message": str(exc) or exc.__class__.__name__}
+        finally:
+            try:
+                await c.close()
+            except Exception:  # noqa: BLE001
+                pass
+
     @app.post("/api/actions")
     async def action(body: ActionIn):
-        if not (cfg.actions_enabled or cfg.demo_active):
-            raise HTTPException(403, "Acties staan uit. Zet ACTIONS_ENABLED=true om ze te gebruiken.")
+        if not (S().actions_enabled or S().demo_active):
+            raise HTTPException(403, "Acties staan uit. Zet ze aan via Instellingen › Algemeen.")
         if body.kind not in ALLOWED_ACTIONS.get(body.source, set()):
             raise HTTPException(400, "Onbekende actie")
         collector = engine.collectors.get(body.source)

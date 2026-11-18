@@ -1,6 +1,6 @@
 [project]
 name = "labpilot"
-version = "1.0.0"
+version = "1.1.0"
 description = "One pane of glass for ESXi, Synology, UniFi and Veeam"
 requires-python = ">=3.11"
 license = { text = "MIT" }
